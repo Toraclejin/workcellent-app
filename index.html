@@ -49,6 +49,7 @@
   .seg button.active { background: #d8d8d8; font-weight: 600; }
   .seg button:disabled { color: #b0b0b0; cursor: default; }
   .toolbar .right { margin-left: auto; color: var(--muted); font-size: 12px; }
+  .toolbar .right.demo { color: var(--diff); font-weight: 700; }
 
   /* 상태 띠 */
   #status { display: none; flex: none; padding: 6px 14px; font-size: 12px; border-bottom: 1px solid var(--line); }
@@ -230,6 +231,10 @@
           <button class="btn primary" id="btn-open-1">폴더 열기</button>
           <button class="btn" id="btn-reconnect" style="display:none">지난번 폴더 다시 잇기: <b id="reconnect-name"></b></button>
         </div>
+        <div class="actions" style="margin-top:4px">
+          <button class="btn" id="btn-demo">샘플로 둘러보기 (저장 없음)</button>
+          <span class="muted">폴더를 고르지 않고 예시 데이터로 화면만 봅니다. 시연·소개용.</span>
+        </div>
         <p class="muted">빈 폴더를 고르면 안에 파일 구조를 새로 만듭니다. 이미 데이터가 있는 폴더를 고르면 그대로 읽습니다.</p>
         <p class="muted">한 번 연 폴더는 기억합니다. 다음에 열 때는 브라우저의 "허용" 한 번이면 됩니다. 브라우저 보안 규칙이라 그 한 번은 없앨 수 없습니다.</p>
       </div>
@@ -381,6 +386,7 @@ const S = {
   orders: [],          // 전체 order.json을 메모리에 올린다
   sel: { country: null, buyerId: null, orderId: null, categoryKey: null, productId: null, searchCategory: null },
   warnings: [],
+  demo: false,         // 둘러보기: 폴더 없이 앱 안 샘플을 메모리에만. 저장 안 됨
   edit: null,          // 편집 중인 폼 (M2)
   tab: 'settings',
 };
@@ -539,7 +545,7 @@ async function ensurePermission(h) {
 async function openRoot(h) {
   try {
     if (!(await ensurePermission(h))) { setStatus('err', '폴더 쓰기 권한이 없습니다', true); return; }
-    S.root = h;
+    S.demo = false; S.root = h;
     await initStructure();
     await loadAll();
     let remembered = true;
@@ -551,6 +557,21 @@ async function openRoot(h) {
     console.error(e);
     setStatus('err', '폴더를 열지 못했습니다: ' + e.message, true);
   }
+}
+
+/* 둘러보기: 폴더를 고르지 않고 앱 안 샘플을 메모리에만 올린다. 고쳐도 저장되지 않는다 */
+function startDemo() {
+  S.demo = true; S.root = null;
+  S.settings = { ...DEFAULT_SETTINGS, ...deep(SAMPLE.settings) };
+  S.schema = normalizeSchema(SAMPLE.schema);
+  S.buyers = SAMPLE.buyers.entities.map((e) => normalizeBuyer({ ...deep(e.data), folderName: e.folderName }));
+  S.products = SAMPLE.products.entities.map((e) => ({ ...deep(e.data), folderName: e.folderName }));
+  S.orders = SAMPLE.orders.entities.map((e) => ({ ...deep(e.data), folderName: e.folderName }));
+  S.sel = { country: null, buyerId: null, orderId: null, categoryKey: null, productId: null, searchCategory: null };
+  S.edit = null; S.warnings = [];
+  showApp();
+  switchTab('orders');
+  setStatus('info', '둘러보기 — 앱 안에 든 예시 데이터입니다. 눌러보고 고쳐봐도 PC에는 저장되지 않습니다. 실제로 쓰려면 설정 탭에서 폴더를 여세요.', true);
 }
 
 /* 빈 폴더면 구조를 만든다. 있으면 건드리지 않는다 */
@@ -679,7 +700,9 @@ async function insertSample() {
 function showApp() {
   $('#welcome').classList.remove('active');
   document.querySelectorAll('#tabs button').forEach((b) => (b.disabled = false));
-  $('#app-folder').textContent = '폴더 ' + S.root.name;
+  const fo = $('#app-folder');
+  fo.textContent = S.demo ? '둘러보기 · 저장 안 됨' : '폴더 ' + S.root.name;
+  fo.classList.toggle('demo', !!S.demo);
   $('#app-company').textContent = S.settings.companyName ? '— ' + S.settings.companyName : '';
   renderAll();
 }
@@ -1082,15 +1105,17 @@ function runSearch() {
    ============================================================ */
 function renderSettings() {
   const st = S.settings || DEFAULT_SETTINGS;
+  const live = !!(S.root || S.demo);
   [['#co-name', 'companyName'], ['#co-name-en', 'companyNameEn'], ['#co-address', 'companyAddress'], ['#co-tel', 'companyTel'], ['#co-email', 'companyEmail']]
-    .forEach(([sel, k]) => { const el = $(sel); if (el) { el.value = st[k] || ''; el.disabled = !S.root; } });
-  $('#btn-company-save').disabled = !S.root;
-  $('#settings-folder').textContent = S.root ? S.root.name : '(안 열림)';
-  $('#settings-counts').textContent = S.root ? `바이어 ${S.buyers.length} · 제품 ${S.products.length} · 주문 ${S.orders.length}` : '';
+    .forEach(([sel, k]) => { const el = $(sel); if (el) { el.value = st[k] || ''; el.disabled = !live; } });
+  $('#btn-company-save').disabled = !live;
+  $('#settings-folder').textContent = S.root ? S.root.name : (S.demo ? '(둘러보기 — 폴더 없음. 저장되지 않습니다)' : '(안 열림)');
+  $('#settings-counts').textContent = live ? `바이어 ${S.buyers.length} · 제품 ${S.products.length} · 주문 ${S.orders.length}` : '';
   $('#btn-rebuild').disabled = !S.root;
   $('#btn-sample').disabled = !S.root;
   $('#sample-note').textContent = S.settings && S.settings.sampleLoaded ? '이 폴더에는 샘플이 들어 있습니다.' : '';
   renderCsvImport();
+  const bd = $('#btn-schema-edit-wrap'); if (bd) bd.style.display = live ? '' : 'none';
   const sc0 = $('#settings-schema');
   sc0.replaceWith(sc0.cloneNode(false)); const sc = $('#settings-schema');
   if (!S.schema) { sc.innerHTML = '<div class="muted">폴더를 열면 여기에 항목이 보입니다.</div>'; return; }
@@ -1101,7 +1126,7 @@ function renderSettings() {
   for (const c of S.schema.categories) html += `<div class="sec">카테고리 · ${esc(c.label)}<span class="light"><code>${esc(c.key)}</code> · 사양 ${c.fields.length}항목</span></div>${tbl(c.fields, true)}`;
   html += `<div class="sec">라인 수출 정보<span class="light">linePack · 주문 라인마다</span></div>${S.schema.linePack.length ? tbl(S.schema.linePack, false) : '<div class="empty">없음</div>'}`;
   html += `<div class="sec">주문 수출 정보<span class="light">orderShipping · 주문마다</span></div>${S.schema.orderShipping.length ? tbl(S.schema.orderShipping, false) : '<div class="empty">없음</div>'}`;
-  html = `<div class="actions" style="margin:0 0 8px"><button class="btn" id="btn-schema-edit">사양 항목 편집</button><span class="muted">카테고리·항목·단위를 화면에서 고칩니다. 파일을 직접 고쳐도 됩니다.</span></div>` + html;
+  html = `<div class="actions" id="btn-schema-edit-wrap" style="margin:0 0 8px"><button class="btn" id="btn-schema-edit">사양 항목 편집</button><span class="muted">카테고리·항목·단위를 화면에서 고칩니다. 파일을 직접 고쳐도 됩니다.</span></div>` + html;
   sc.innerHTML = html;
   sc.querySelector('#btn-schema-edit').addEventListener('click', startSchemaEdit);
 }
@@ -1137,6 +1162,14 @@ function orderFolderName(o) { return uniqueFolderName(`${(o.orderDate || '').sli
 /* 저장: 파일 쓰기 + 인덱스 갱신 + 메모리 갱신. 다른 곳에서 먼저 저장했으면 묻는다 */
 async function saveEntity(typeKey, obj, isNew) {
   const t = TYPES[typeKey], list = S[t.list];
+  if (S.demo) {               // 둘러보기: 파일에 쓰지 않고 메모리만 바꾼다
+    const now = nowIso();
+    if (isNew) { obj.id = obj.id || newId(); obj.createdAt = now; obj.folderName = typeKey === 'orders' ? orderFolderName(obj) : uniqueFolderName(slugify(obj.name), list); }
+    obj.updatedAt = now;
+    const j = list.findIndex((x) => x.id === obj.id);
+    if (j >= 0) list[j] = obj; else list.push(obj);
+    return obj;
+  }
   const d = await subdir(S.root, t.dir);
   const now = nowIso();
   if (isNew) {
@@ -1180,6 +1213,7 @@ async function copyDir(src, dst) {
 }
 async function trashEntity(typeKey, obj) {
   const t = TYPES[typeKey];
+  if (S.demo) { S[t.list] = S[t.list].filter((x) => x.id !== obj.id); return; }
   const d = await subdir(S.root, t.dir);
   const src = await d.getDirectoryHandle(obj.folderName);
   const trash = await subdir(await subdir(S.root, '_trash'), t.dir);
@@ -1494,6 +1528,7 @@ async function entityFilesDir(typeKey, obj) {
 async function orderFilesDir(o) { return entityFilesDir('orders', o); }
 async function addFilesToOrder(o, fileList, kind) { return addFilesToEntity('orders', o, fileList, kind); }
 async function addFilesToEntity(typeKey, o, fileList, kind) {
+  if (S.demo) throw new Error('둘러보기에서는 파일을 넣을 수 없습니다. 설정 탭에서 폴더를 여세요');
   const dir = await entityFilesDir(typeKey, o);
   const existing = new Set(); for await (const [n] of dir.entries()) existing.add(n);
   let added = 0;
@@ -1511,6 +1546,7 @@ async function addFilesToEntity(typeKey, o, fileList, kind) {
   return added;
 }
 async function openEntityFile(typeKey, o, f) {
+  if (S.demo) throw new Error('둘러보기에서는 첨부 파일을 열 수 없습니다');
   const dir = await entityFilesDir(typeKey, o);
   const fh = await dir.getFileHandle(f.name);
   const file = await fh.getFile();
@@ -1872,21 +1908,21 @@ async function saveSchema() {
   if (errs.length) return formMsg(errs.join(' · '));
   const out = { version: 2, categories: d.categories, linePack: d.linePack, orderShipping: d.orderShipping };
   try {
-    await writeJson(S.root, '_schema.json', out);
+    if (!S.demo) await writeJson(S.root, '_schema.json', out);
     S.schema = normalizeSchema(out); S.edit = null;
-    renderAll(); setStatus('ok', '_schema.json을 저장했습니다');
+    renderAll(); setStatus('ok', S.demo ? '사양 항목을 바꿨습니다 (둘러보기라 파일에는 저장되지 않음)' : '_schema.json을 저장했습니다');
   } catch (e) { formMsg('저장 실패: ' + e.message); }
 }
 
 /* 회사 정보 저장 (settings.json) */
 async function saveCompany() {
-  if (!S.root) return;
+  if (!S.root && !S.demo) return;
   const v = (sel) => $(sel).value.trim();
   Object.assign(S.settings, { companyName: v('#co-name'), companyNameEn: v('#co-name-en'), companyAddress: v('#co-address'), companyTel: v('#co-tel'), companyEmail: v('#co-email') });
   try {
-    await writeJson(S.root, 'settings.json', S.settings);
+    if (!S.demo) await writeJson(S.root, 'settings.json', S.settings);
     $('#app-company').textContent = S.settings.companyName ? '— ' + S.settings.companyName : '';
-    setStatus('ok', '회사 정보를 저장했습니다');
+    setStatus('ok', S.demo ? '회사 정보를 바꿨습니다 (둘러보기라 파일에는 저장되지 않음)' : '회사 정보를 저장했습니다');
   } catch (e) { setStatus('err', '저장 실패: ' + e.message, true); }
 }
 
@@ -1899,6 +1935,7 @@ async function boot() {
   $('#welcome-title').textContent = CONFIG.appTitle;
   document.querySelectorAll('#tabs button').forEach((b) => b.addEventListener('click', () => switchTab(b.dataset.tab)));
   $('#btn-open-1').addEventListener('click', pickFolder);
+  $('#btn-demo').addEventListener('click', startDemo);
   $('#btn-open-2').addEventListener('click', pickFolder);
   $('#btn-rebuild').addEventListener('click', rebuildAllIndexes);
   $('#btn-sample').addEventListener('click', insertSample);
@@ -1907,9 +1944,12 @@ async function boot() {
   $('#btn-search-clear').addEventListener('click', () => { renderSearchForm(); $('#search-result').innerHTML = ''; $('#search-summary').textContent = ''; });
   try { renderSettings(); } catch (e) { console.error('설정 화면 초기화 실패', e); }
 
+  // 주소에 ?demo 가 있으면 폴더 없이 바로 둘러보기
+  if (/(^|[?&])demo(=|&|$)/.test(location.search)) { startDemo(); return; }
+
   if (!window.showDirectoryPicker) {
     $('#welcome-unsupported').style.display = '';
-    $('#welcome-actions').style.display = 'none';
+    $('#btn-open-1').style.display = 'none';          // 폴더 열기는 안 되지만 둘러보기는 된다
     return;
   }
   // 지난번 폴더 다시 잇기: 권한이 남아 있으면 바로 연다. 아니면 화면 아무 데나 한 번 클릭 → 브라우저 허용 창 → 열림
